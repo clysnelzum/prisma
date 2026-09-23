@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint & Style Check
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check CMake format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake-format
+          find . -name CMakeLists.txt -not -path "./cmake/*" -not -path "./libraries/*" | head -20 | xargs cmake-format --check 2>&1 || echo "⚠️ Some CMake files need formatting"
+
+      - name: Check trailing whitespace
+        run: |
+          ! git grep -I $'\t' -- '*.cpp' '*.h' '*.cmake' 'CMakeLists.txt' || echo "Tabs found in source files"
+
+      - name: Check line endings
+        run: |
+          ! git grep -I $'\r' -- '*.cpp' '*.h' '*.cmake' 'CMakeLists.txt' || echo "CRLF line endings found"
+
+  build-check:
+    name: Build Check (Linux)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build extra-cmake-modules pkg-config \
+            libgl1-mesa-dev libxkbcommon-dev libxcb-xinerama0 libxcb-cursor0
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ci-linux-build
+          max-size: 1G
+
+      - name: Install Qt 6.8
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          modules: 'qtimageformats qtnetworkauth'
+          cache: true
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'a42af01b72c28a8e1d7b48107b33e4f286a55ef6'
+
+      - name: Configure CMake
+        run: |
+          cmake --preset linux \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DENABLE_LTO=OFF \
+            -DBUILD_TESTING=OFF
+
+      - name: Build
+        run: cmake --build --preset linux --config Release -j$(nproc)

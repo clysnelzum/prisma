@@ -1,0 +1,328 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag or version name to publish (e.g. 1.0.0)'
+        required: false
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    name: Linux (AppImage)
+    runs-on: ubuntu-24.04
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build extra-cmake-modules pkg-config \
+            libgl1-mesa-dev libfuse2 libxkbcommon-dev libxcb-xinerama0 libxcb-cursor0
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: release-linux
+          max-size: 1G
+
+      - name: Install Qt 6.8
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          modules: 'qtimageformats qtnetworkauth'
+          cache: true
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'a42af01b72c28a8e1d7b48107b33e4f286a55ef6'
+
+      - name: Build
+        run: |
+          cmake --preset linux \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DENABLE_LTO=ON \
+            -DBUILD_TESTING=OFF
+          cmake --build --preset linux --config Release
+
+      - name: Install
+        run: DESTDIR=$(pwd)/AppDir cmake --install build --config Release
+
+      - name: Package AppImage
+        run: |
+          VERSION="${{ inputs.tag_name || github.ref_name }}"
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -O linuxdeploy
+          chmod +x linuxdeploy
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage -O linuxdeploy-plugin-qt
+          chmod +x linuxdeploy-plugin-qt
+          
+          export LD_LIBRARY_PATH=$QT_ROOT_DIR/lib:$LD_LIBRARY_PATH
+          export QMAKE=$QT_ROOT_DIR/bin/qmake
+          
+          ./linuxdeploy --appdir AppDir \
+            --executable AppDir/usr/bin/prismlauncher \
+            --desktop-file AppDir/usr/share/applications/org.prismlauncher.PrismLauncher.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/org.prismlauncher.PrismLauncher_256.png \
+            --plugin qt \
+            --output appimage \
+            --filename "Prisma-Linux-${VERSION}-x86_64.AppImage"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: '*.AppImage'
+
+  build-macos:
+    name: macOS (DMG)
+    runs-on: macos-14
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: brew install cmake ninja extra-cmake-modules
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: release-macos
+          max-size: 1G
+
+      - name: Install Qt 6.8
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          modules: 'qtimageformats qtnetworkauth'
+          cache: true
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'a42af01b72c28a8e1d7b48107b33e4f286a55ef6'
+
+      - name: Build
+        run: |
+          cmake --preset macos_universal \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+            -DBUILD_TESTING=OFF
+          cmake --build --preset macos_universal --config Release
+
+      - name: Install
+        run: cmake --install build --config Release --prefix install
+
+      - name: Package DMG
+        run: |
+          VERSION="${{ inputs.tag_name || github.ref_name }}"
+          mkdir -p "Prisma.app/Contents/MacOS"
+          mkdir -p "Prisma.app/Contents/Resources"
+          cp install/bin/prismlauncher "Prisma.app/Contents/MacOS/"
+          cp -R install/share/prismlauncher/* "Prisma.app/Contents/Resources/" 2>/dev/null || true
+          cp program_info/prismlauncher.icns "Prisma.app/Contents/Resources/" 2>/dev/null || true
+          
+          cat > "Prisma.app/Contents/Info.plist" << PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>prismlauncher</string>
+            <key>CFBundleIdentifier</key><string>org.prismlauncher.PrismLauncher</string>
+            <key>CFBundleName</key><string>Prisma</string>
+            <key>CFBundleDisplayName</key><string>Prisma</string>
+            <key>CFBundleVersion</key><string>${VERSION}</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+          </dict>
+          </plist>
+          PLIST
+          
+          hdiutil create -volname "Prisma" -srcfolder "Prisma.app" -ov -format UDZO "Prisma-macOS-${VERSION}.dmg"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: '*.dmg'
+
+  build-windows:
+    name: Windows (Portable ZIP)
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          path-type: full
+          update: true
+          install: |
+            mingw-w64-clang-x86_64-clang
+            mingw-w64-clang-x86_64-cmake
+            mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-extra-cmake-modules
+            mingw-w64-clang-x86_64-pkgconf
+            mingw-w64-clang-x86_64-qt6-base
+            mingw-w64-clang-x86_64-qt6-imageformats
+            mingw-w64-clang-x86_64-qt6-svg
+            mingw-w64-clang-x86_64-qt6-networkauth
+            mingw-w64-clang-x86_64-libarchive
+            mingw-w64-clang-x86_64-zlib
+            mingw-w64-clang-x86_64-cmark
+            mingw-w64-clang-x86_64-qt6-tools
+            mingw-w64-clang-x86_64-qt6-translations
+            mingw-w64-clang-x86_64-qrencode
+            mingw-w64-clang-x86_64-tomlplusplus
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/clang64 \
+            -DCMAKE_PREFIX_PATH=/clang64 \
+            -DENABLE_LTO=ON \
+            -DBUILD_TESTING=OFF \
+            -DLauncher_QT_VERSION_MAJOR=6
+          cmake --build build --config Release
+
+      - name: Stage files for portable package
+        shell: msys2 {0}
+        run: |
+          STAGE="$(pwd)/stage"
+          mkdir -p "$STAGE"
+
+          # Binaries
+          cp build/launcher/prismlauncher.exe "$STAGE/"
+          cp build/launcher/prismlauncher_filelink.exe "$STAGE/" 2>/dev/null || true
+          cp build/launcher/prismlauncher_updater.exe "$STAGE/" 2>/dev/null || true
+
+          # Qt DLLs
+          for dll in \
+            Qt6Core Qt6Gui Qt6Widgets Qt6Network Qt6Concurrent Qt6Xml \
+            Qt6NetworkAuth Qt6OpenGL Qt6Svg Qt6DBus Qt6Test \
+            libpng16-16 libjpeg-8 libharfbuzz-0 libpcre2-16-0 \
+            libfreetype-6 libbz2-1 libintl-8 libiconv-2 libpcre2-8-0 \
+            libgraphite2 libbrotlidec libbrotlicommon \
+            libpng16 libpng16-16 libcrypto-3 libssl-3 \
+            libzstd libdouble-conversion libicuuc78 libicuin78 libicudt78 \
+            zlib1 libzstd.dll libwinpthread-1 libgcc_s_seh-1 libstdc++-6 libc++abi \
+            libunwind libclang_rt; do
+            find /clang64/bin -maxdepth 1 -name "${dll}*.dll" -exec cp {} "$STAGE/" \; 2>/dev/null || true
+          done
+
+          # Broader: copy ALL dlls from /clang64/bin
+          cp /clang64/bin/*.dll "$STAGE/" 2>/dev/null || true
+
+          # Qt plugins
+          for plugin in iconengines imageformats platforms styles tls; do
+            if [ -d "$QT_ROOT_DIR/plugins/$plugin" ]; then
+              cp -r "$QT_ROOT_DIR/plugins/$plugin" "$STAGE/$plugin"
+            elif [ -d "/clang64/share/qt6/plugins/$plugin" ]; then
+              cp -r "/clang64/share/qt6/plugins/$plugin" "$STAGE/$plugin"
+            fi
+          done
+
+          # Qt translations
+          mkdir -p "$STAGE/translations"
+          cp -r /clang64/share/qt6/translations/* "$STAGE/translations/" 2>/dev/null || true
+
+          # Java launcher jars
+          mkdir -p "$STAGE/jars"
+          cp build/jars/*.jar "$STAGE/jars/" 2>/dev/null || true
+          cp -r install/share/prismlauncher/jars/* "$STAGE/jars/" 2>/dev/null || true
+
+          # Config files
+          cp build/program_info/qt.conf "$STAGE/" 2>/dev/null || true
+          echo "[Paths]" > "$STAGE/qt.conf"
+          echo "Plugins = plugins" >> "$STAGE/qt.conf"
+          cp build/program_info/qtlogging.ini "$STAGE/" 2>/dev/null || true
+
+          # Portable mode marker
+          cp "${{ github.workspace }}/program_info/portable.txt" "$STAGE/"
+
+          # List what we staged
+          echo "=== Staged files ==="
+          ls -la "$STAGE/"
+          echo "=== DLL count ==="
+          ls "$STAGE/"*.dll 2>/dev/null | wc -l
+
+      - name: Package Portable ZIP
+        shell: msys2 {0}
+        run: |
+          VERSION="${{ inputs.tag_name || github.ref_name }}"
+          cd stage
+          7z a -tzip "${{ github.workspace }}/Prisma-Windows-Portable-${VERSION}.zip" *
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: Prisma-Windows-Portable-*.zip
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build-linux, build-macos, build-windows]
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name || github.ref_name }}
+          name: Prisma ${{ inputs.tag_name || github.ref_name }}
+          body: |
+            ## Prisma ${{ inputs.tag_name || github.ref_name }}
+            
+            Fork de [PrismLauncher](https://github.com/PrismLauncher/PrismLauncher) con soporte para cuentas online y offline.
+            
+            ### Descargas
+            - **Linux**: AppImage (x86_64)
+            - **macOS**: DMG (Universal)
+            - **Windows**: Portable ZIP (x86_64)
+            
+            ### Notas
+            - Linux: `chmod +x Prisma-Linux-*.AppImage && ./Prisma-Linux-*.AppImage`
+            - macOS: Clic derecho → Abrir (para bypass de Gatekeeper)
+            - Windows: Descomprimir el archivo ZIP en cualquier carpeta o pendrive y ejecutar `prismlauncher.exe`
+          files: |
+            artifacts/**/*
