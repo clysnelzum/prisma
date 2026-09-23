@@ -94,13 +94,14 @@ jobs:
           export LD_LIBRARY_PATH=$QT_ROOT_DIR/lib:$LD_LIBRARY_PATH
           export QMAKE=$QT_ROOT_DIR/bin/qmake
           
+          export LDAI_OUTPUT="Prisma-Linux-${VERSION}-x86_64.AppImage"
+          
           ./linuxdeploy --appdir AppDir \
             --executable AppDir/usr/bin/prismlauncher \
             --desktop-file AppDir/usr/share/applications/org.prismlauncher.PrismLauncher.desktop \
             --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/org.prismlauncher.PrismLauncher_256.png \
             --plugin qt \
-            --output appimage \
-            --filename "Prisma-Linux-${VERSION}-x86_64.AppImage"
+            --output appimage
 
       - name: Upload
         uses: actions/upload-artifact@v6
@@ -120,7 +121,7 @@ jobs:
           fetch-depth: 1
 
       - name: Install dependencies
-        run: brew install cmake ninja extra-cmake-modules
+        run: brew install cmake ninja extra-cmake-modules ccache
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2.24
@@ -167,28 +168,23 @@ jobs:
       - name: Package DMG
         run: |
           VERSION="${{ inputs.tag_name || github.ref_name }}"
-          mkdir -p "Prisma.app/Contents/MacOS"
-          mkdir -p "Prisma.app/Contents/Resources"
-          cp install/bin/prismlauncher "Prisma.app/Contents/MacOS/"
-          cp -R install/share/prismlauncher/* "Prisma.app/Contents/Resources/" 2>/dev/null || true
-          cp program_info/prismlauncher.icns "Prisma.app/Contents/Resources/" 2>/dev/null || true
-          
-          cat > "Prisma.app/Contents/Info.plist" << PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleExecutable</key><string>prismlauncher</string>
-            <key>CFBundleIdentifier</key><string>org.prismlauncher.PrismLauncher</string>
-            <key>CFBundleName</key><string>Prisma</string>
-            <key>CFBundleDisplayName</key><string>Prisma</string>
-            <key>CFBundleVersion</key><string>${VERSION}</string>
-            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
-          </dict>
-          </plist>
-          PLIST
-          
-          hdiutil create -volname "Prisma" -srcfolder "Prisma.app" -ov -format UDZO "Prisma-macOS-${VERSION}.dmg"
+          APP_DIR=""
+          if [ -d "install/Prisma.app" ]; then
+            APP_DIR="install/Prisma.app"
+          elif [ -d "install/prismlauncher.app" ]; then
+            APP_DIR="install/prismlauncher.app"
+          elif [ -d "build/Prisma.app" ]; then
+            APP_DIR="build/Prisma.app"
+          else
+            APP_DIR=$(find build install -maxdepth 2 -name "*.app" -type d | head -n 1)
+          fi
+
+          test -n "$APP_DIR" && test -d "$APP_DIR" || { echo "ERROR: .app bundle not found!"; exit 1; }
+
+          mkdir -p dmg_root
+          cp -R "$APP_DIR" dmg_root/Prisma.app
+          ln -s /Applications dmg_root/Applications
+          hdiutil create -volname "Prisma" -srcfolder dmg_root -ov -format UDZO "Prisma-macOS-${VERSION}.dmg"
 
       - name: Upload
         uses: actions/upload-artifact@v6
@@ -253,9 +249,14 @@ jobs:
           mkdir -p "$STAGE"
 
           # Binaries
-          cp build/launcher/prismlauncher.exe "$STAGE/"
-          cp build/launcher/prismlauncher_filelink.exe "$STAGE/" 2>/dev/null || true
-          cp build/launcher/prismlauncher_updater.exe "$STAGE/" 2>/dev/null || true
+          if [ -f "build/prismlauncher.exe" ]; then
+            cp build/prismlauncher*.exe "$STAGE/"
+          elif [ -f "build/launcher/prismlauncher.exe" ]; then
+            cp build/launcher/prismlauncher*.exe "$STAGE/"
+          else
+            find build -maxdepth 2 -type f -name "prismlauncher*.exe" -exec cp {} "$STAGE/" \;
+          fi
+          test -f "$STAGE/prismlauncher.exe" || { echo "ERROR: prismlauncher.exe not found!"; exit 1; }
 
           # Qt DLLs
           for dll in \
@@ -274,12 +275,12 @@ jobs:
           # Broader: copy ALL dlls from /clang64/bin
           cp /clang64/bin/*.dll "$STAGE/" 2>/dev/null || true
 
-          # Qt plugins
+          # Qt plugins (copy to both root and plugins/ for maximum compatibility)
+          mkdir -p "$STAGE/plugins"
           for plugin in iconengines imageformats platforms styles tls; do
-            if [ -d "$QT_ROOT_DIR/plugins/$plugin" ]; then
-              cp -r "$QT_ROOT_DIR/plugins/$plugin" "$STAGE/$plugin"
-            elif [ -d "/clang64/share/qt6/plugins/$plugin" ]; then
+            if [ -d "/clang64/share/qt6/plugins/$plugin" ]; then
               cp -r "/clang64/share/qt6/plugins/$plugin" "$STAGE/$plugin"
+              cp -r "/clang64/share/qt6/plugins/$plugin" "$STAGE/plugins/$plugin"
             fi
           done
 
@@ -293,10 +294,12 @@ jobs:
           cp -r install/share/prismlauncher/jars/* "$STAGE/jars/" 2>/dev/null || true
 
           # Config files
-          cp build/program_info/qt.conf "$STAGE/" 2>/dev/null || true
-          echo "[Paths]" > "$STAGE/qt.conf"
-          echo "Plugins = plugins" >> "$STAGE/qt.conf"
-          cp build/program_info/qtlogging.ini "$STAGE/" 2>/dev/null || true
+          cat > "$STAGE/qt.conf" << 'EOF'
+[Paths]
+Prefix = .
+Plugins = plugins
+EOF
+          cp launcher/qtlogging.ini "$STAGE/" 2>/dev/null || true
 
           # Portable mode marker
           cp "${{ github.workspace }}/program_info/portable.txt" "$STAGE/"
