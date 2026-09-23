@@ -116,89 +116,6 @@ jobs:
           name: linux
           path: '*.AppImage'
 
-  build-macos:
-    name: macOS (DMG)
-    runs-on: macos-14
-    
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
-      - name: Install dependencies
-        run: brew install cmake ninja extra-cmake-modules ccache
-
-      - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.24
-        with:
-          key: release-macos
-          max-size: 2G
-
-      - name: Install Qt 6.8
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.8.3'
-          modules: 'qtimageformats qtnetworkauth'
-          cache: true
-
-      - name: Cache vcpkg archives
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/vcpkg/archives
-          key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
-          restore-keys: |
-            ${{ runner.os }}-vcpkg-
-
-      - name: Bootstrap vcpkg
-        run: |
-          chmod +x cmake/vcpkg/bootstrap-vcpkg.sh
-          ./cmake/vcpkg/bootstrap-vcpkg.sh -disableMetrics
-          echo "VCPKG_ROOT=${{ github.workspace }}/cmake/vcpkg" >> $GITHUB_ENV
-
-      - name: Build
-        run: |
-          cmake --preset macos_universal \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_MAKE_PROGRAM=ninja \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
-            -DBUILD_TESTING=OFF \
-            -Wno-dev
-          cmake --build --preset macos_universal --config Release --parallel
-
-      - name: Install
-        run: cmake --install build --config Release --prefix install
-
-      - name: Package DMG
-        run: |
-          VERSION="${{ inputs.tag_name || github.ref_name }}"
-          APP_DIR=""
-          if [ -d "install/Prisma.app" ]; then
-            APP_DIR="install/Prisma.app"
-          elif [ -d "install/prismlauncher.app" ]; then
-            APP_DIR="install/prismlauncher.app"
-          elif [ -d "build/Prisma.app" ]; then
-            APP_DIR="build/Prisma.app"
-          else
-            APP_DIR=$(find build install -maxdepth 2 -name "*.app" -type d | head -n 1)
-          fi
-
-          test -n "$APP_DIR" && test -d "$APP_DIR" || { echo "ERROR: .app bundle not found!"; exit 1; }
-
-          mkdir -p dmg_root
-          cp -R "$APP_DIR" dmg_root/Prisma.app
-          ln -s /Applications dmg_root/Applications
-          hdiutil create -volname "Prisma" -srcfolder dmg_root -ov -format UDZO "Prisma-macOS-${VERSION}.dmg"
-
-      - name: Upload
-        uses: actions/upload-artifact@v6
-        with:
-          name: macos
-          path: '*.dmg'
-
   build-windows:
     name: Windows (Portable ZIP)
     runs-on: windows-latest
@@ -337,7 +254,7 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux, build-windows]
     permissions:
       contents: write
     
@@ -360,12 +277,10 @@ jobs:
             
             ### Descargas
             - **Linux**: AppImage (x86_64)
-            - **macOS**: DMG (Universal)
             - **Windows**: Portable ZIP (x86_64)
             
             ### Notas
             - Linux: `chmod +x Prisma-Linux-*.AppImage && ./Prisma-Linux-*.AppImage`
-            - macOS: Clic derecho → Abrir (para bypass de Gatekeeper)
             - Windows: Descomprimir el archivo ZIP en cualquier carpeta o pendrive y ejecutar `prismlauncher.exe`
           files: |
             artifacts/**/*
