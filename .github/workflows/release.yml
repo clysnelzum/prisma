@@ -294,11 +294,7 @@ jobs:
           cp -r install/share/prismlauncher/jars/* "$STAGE/jars/" 2>/dev/null || true
 
           # Config files
-          cat > "$STAGE/qt.conf" << 'EOF'
-[Paths]
-Prefix = .
-Plugins = plugins
-EOF
+          printf "[Paths]\nPrefix = .\nPlugins = plugins\n" > "$STAGE/qt.conf"
           cp launcher/qtlogging.ini "$STAGE/" 2>/dev/null || true
 
           # Portable mode marker
