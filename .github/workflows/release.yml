@@ -84,6 +84,8 @@ jobs:
         run: DESTDIR=$(pwd)/AppDir cmake --install build --config Release
 
       - name: Package AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           VERSION="${{ inputs.tag_name || github.ref_name }}"
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -O linuxdeploy
@@ -93,7 +95,7 @@ jobs:
           
           export LD_LIBRARY_PATH=$QT_ROOT_DIR/lib:$LD_LIBRARY_PATH
           export QMAKE=$QT_ROOT_DIR/bin/qmake
-          
+          export APPIMAGE_EXTRACT_AND_RUN=1
           export LDAI_OUTPUT="Prisma-Linux-${VERSION}-x86_64.AppImage"
           
           ./linuxdeploy --appdir AppDir \
@@ -328,7 +330,7 @@ jobs:
     
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v6
         with:
           path: artifacts
           merge-multiple: true
