@@ -1,0 +1,8 @@
+{
+  "name": "libqrencode",
+  "version": "4.1.1",
+  "port-version": 4,
+  "description": "A fast and compact QR Code encoding library",
+  "homepage": "https://fukuchi.org/works/qrencode/",
+  "license": "LGPL-2.1-or-later"
+}

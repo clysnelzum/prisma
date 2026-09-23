@@ -98,10 +98,15 @@ jobs:
           export APPIMAGE_EXTRACT_AND_RUN=1
           export LDAI_OUTPUT="Prisma-Linux-${VERSION}-x86_64.AppImage"
           
+          ICON_FILE="AppDir/usr/share/icons/hicolor/256x256/apps/org.prismlauncher.PrismLauncher.png"
+          if [ ! -f "$ICON_FILE" ]; then
+            ICON_FILE="program_info/org.prismlauncher.PrismLauncher_256.png"
+          fi
+          
           ./linuxdeploy --appdir AppDir \
             --executable AppDir/usr/bin/prismlauncher \
             --desktop-file AppDir/usr/share/applications/org.prismlauncher.PrismLauncher.desktop \
-            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/org.prismlauncher.PrismLauncher_256.png \
+            --icon-file "$ICON_FILE" \
             --plugin qt \
             --output appimage
 
@@ -228,6 +233,7 @@ jobs:
             mingw-w64-clang-x86_64-qt6-translations
             mingw-w64-clang-x86_64-qrencode
             mingw-w64-clang-x86_64-tomlplusplus
+            p7zip
 
       - name: Build
         shell: msys2 {0}
@@ -313,7 +319,14 @@ jobs:
         run: |
           VERSION="${{ inputs.tag_name || github.ref_name }}"
           cd stage
-          7z a -tzip "${{ github.workspace }}/Prisma-Windows-Portable-${VERSION}.zip" *
+          if command -v 7z >/dev/null 2>&1; then
+            7z a -tzip "${{ github.workspace }}/Prisma-Windows-Portable-${VERSION}.zip" *
+          elif [ -f "/c/Program Files/7-Zip/7z.exe" ]; then
+            "/c/Program Files/7-Zip/7z.exe" a -tzip "${{ github.workspace }}/Prisma-Windows-Portable-${VERSION}.zip" *
+          else
+            pacman -S --noconfirm p7zip
+            7z a -tzip "${{ github.workspace }}/Prisma-Windows-Portable-${VERSION}.zip" *
+          fi
 
       - name: Upload
         uses: actions/upload-artifact@v6
