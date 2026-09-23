@@ -1,8 +1,17 @@
 {
   "name": "libqrencode",
-  "version": "4.1.1",
+  "version-semver": "4.1.1",
   "port-version": 4,
-  "description": "A fast and compact QR Code encoding library",
-  "homepage": "https://fukuchi.org/works/qrencode/",
-  "license": "LGPL-2.1-or-later"
+  "description": "libqrencode - a fast and compact QR Code encoding library",
+  "homepage": "https://github.com/fukuchi/libqrencode",
+  "dependencies": [
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ]
 }
