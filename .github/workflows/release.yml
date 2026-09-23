@@ -25,22 +25,25 @@ jobs:
     
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
+          fetch-depth: 1
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake ninja-build extra-cmake-modules pkg-config \
-            libgl1-mesa-dev libfuse2 libxkbcommon-dev libxcb-xinerama0 libxcb-cursor0
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build extra-cmake-modules pkg-config ccache \
+            libgl1-mesa-dev libfuse2 libxkbcommon-dev libxkbcommon-x11-0 libxcb-cursor-dev \
+            libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-glx0
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: release-linux
-          max-size: 1G
+          max-size: 2G
 
       - name: Install Qt 6.8
         uses: jurplel/install-qt-action@v4
@@ -48,9 +51,10 @@ jobs:
           version: '6.8.3'
           modules: 'qtimageformats qtnetworkauth'
           cache: true
+          install-deps: false
 
       - name: Cache vcpkg archives
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/vcpkg/archives
           key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
@@ -72,8 +76,9 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DENABLE_LTO=ON \
-            -DBUILD_TESTING=OFF
-          cmake --build --preset linux --config Release
+            -DBUILD_TESTING=OFF \
+            -Wno-dev
+          cmake --build --preset linux --config Release --parallel
 
       - name: Install
         run: DESTDIR=$(pwd)/AppDir cmake --install build --config Release
@@ -98,7 +103,7 @@ jobs:
             --filename "Prisma-Linux-${VERSION}-x86_64.AppImage"
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linux
           path: '*.AppImage'
@@ -109,18 +114,19 @@ jobs:
     
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
+          fetch-depth: 1
 
       - name: Install dependencies
         run: brew install cmake ninja extra-cmake-modules
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: release-macos
-          max-size: 1G
+          max-size: 2G
 
       - name: Install Qt 6.8
         uses: jurplel/install-qt-action@v4
@@ -130,7 +136,7 @@ jobs:
           cache: true
 
       - name: Cache vcpkg archives
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/vcpkg/archives
           key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
@@ -151,8 +157,9 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
-            -DBUILD_TESTING=OFF
-          cmake --build --preset macos_universal --config Release
+            -DBUILD_TESTING=OFF \
+            -Wno-dev
+          cmake --build --preset macos_universal --config Release --parallel
 
       - name: Install
         run: cmake --install build --config Release --prefix install
@@ -184,7 +191,7 @@ jobs:
           hdiutil create -volname "Prisma" -srcfolder "Prisma.app" -ov -format UDZO "Prisma-macOS-${VERSION}.dmg"
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos
           path: '*.dmg'
@@ -195,9 +202,10 @@ jobs:
     
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
+          fetch-depth: 1
 
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
@@ -234,8 +242,9 @@ jobs:
             -DCMAKE_PREFIX_PATH=/clang64 \
             -DENABLE_LTO=ON \
             -DBUILD_TESTING=OFF \
-            -DLauncher_QT_VERSION_MAJOR=6
-          cmake --build build --config Release
+            -DLauncher_QT_VERSION_MAJOR=6 \
+            -Wno-dev
+          cmake --build build --config Release --parallel
 
       - name: Stage files for portable package
         shell: msys2 {0}
@@ -306,7 +315,7 @@ jobs:
           7z a -tzip "${{ github.workspace }}/Prisma-Windows-Portable-${VERSION}.zip" *
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows
           path: Prisma-Windows-Portable-*.zip
@@ -320,7 +329,7 @@ jobs:
     
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
